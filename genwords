@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+
+from random import choices
+from lzma import LZMAFile
+from sys import argv
+from contextlib import suppress
+
+def varint_decoder(fp):
+    s = 0
+    v = 0
+    while buf := fp.read(4096):
+        for b in buf:
+            v |= ((b & ~128) << s)
+            if b >= 128:
+                s += 7
+            else:
+                yield v
+                s = 0
+                v = 0
+
+
+model, count, maxlen = argv[1:]
+count = int(count)
+maxlen = int(maxlen)
+
+with LZMAFile(model, "r") as fp:
+    enclen = fp.read(1)[0]
+    low = fp.read(enclen).decode()
+    ints = varint_decoder(fp)
+    start = {a + b + c: next(ints) for a in low for b in low for c in low}
+    cont = {}
+    for pre in (a + b + c for a in low for b in low for c in low):
+        cont[pre] = {c: next(ints) for c in low}
+        cont[pre][""] = next(ints)
+
+    with suppress(StopIteration):
+        next(ints)
+        raise Exception
+
+while count > 0:
+    word = choices(list(start), list(start.values()))[0]
+    while True:
+        pop = []
+        wgh = []
+        for k, v in cont[word[-3:]].items():
+            pop.append(k)
+            if not k:
+                v *= len(word) * 3
+            wgh.append(v)
+
+        c = choices(pop, wgh)[0]
+        if not c:
+            if len(word) < 5:
+                continue
+            print(word)
+            count -= 1
+            break
+        word += c
+        if len(word) > maxlen:
+            break

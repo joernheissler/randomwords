@@ -1,0 +1,39 @@
+#!/usr/bin/python3
+
+from requests import Session
+from time import sleep
+from sys import argv, stdout
+stdout.reconfigure(line_buffering=True)
+
+url, category = argv[1:]
+
+url = url.rstrip("/") + "/w/api.php"
+
+with Session() as http:
+    http.headers["User-Agent"] = "CategoryListerBot/1.0 (Wulf@libera) " + http.headers["User-Agent"] 
+
+    params = {
+        "action": "query",
+        "list": "categorymembers",
+        "cmtitle": "Category:" + category,
+        "cmlimit": "max",
+        "format": "json",
+    }
+    while True:
+        resp = http.get(url, params=params)
+        try:
+            resp.raise_for_status()
+        except Exception as ex:
+            print(resp)
+            print(resp.headers)
+            print(resp.text)
+            raise
+
+        doc = resp.json()
+
+        for page in doc.get("query", {}).get("categorymembers", []):
+            print(repr(page["title"]))
+        if "continue" not in doc:
+            break
+        params["cmcontinue"] = doc["continue"]["cmcontinue"]
+        sleep(1)

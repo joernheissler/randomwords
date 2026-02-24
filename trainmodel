@@ -1,0 +1,50 @@
+#!/usr/bin/python3
+
+from sys import stdin, stdout, argv
+from ast import literal_eval
+from string import ascii_lowercase
+from random import choices
+from lzma import LZMAFile, PRESET_EXTREME
+
+def enc_varint(i: int) -> bytes:
+    buf = []
+    while i >= 128:
+        buf.append(128 | i & 127)
+        i >>= 7
+    buf.append(i)
+    return bytes(buf)
+
+low = ascii_lowercase
+if len(argv) == 2:
+    # Allow additional chars, e.g. German "äöüß"
+    low += argv[1]
+
+start = {a + b + c: 1 for a in low for b in low for c in low}
+cont = {a + b + c: {d: 1 for d in low} for a in low for b in low for c in low}
+for w in cont.keys():
+    cont[w][""] = 0
+
+for line in stdin:
+    word = literal_eval(line).lower()
+
+    if min(word) < "a" or max(word) > "z":
+        continue
+
+    if len(word) < 3:
+        continue
+
+    start[word[:3]] += 10
+
+    for idx in range(3, len(word) - 1):
+        cont[word[idx-3:idx]][word[idx]] += 10
+    cont[word[-3:]][""] += 1
+
+with LZMAFile(stdout.buffer, "w", preset=9 | PRESET_EXTREME) as fp:
+    enc = low.encode()
+    fp.write(bytes([len(enc)]))
+    fp.write(enc)
+    for val in start.values():
+        fp.write(enc_varint(val))
+    for conts in cont.values():
+        for val in conts.values():
+            fp.write(enc_varint(val))
