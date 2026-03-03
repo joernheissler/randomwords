@@ -1,16 +1,22 @@
 #!/usr/bin/python3
+"""
+Toy LLM to generate random words
+"""
 
-from random import choices
-from lzma import LZMAFile
-from sys import argv
+from collections.abc import Iterator
 from contextlib import suppress
+from lzma import LZMAFile
+from pathlib import Path
+from random import choices
+from sys import argv
 
-def varint_decoder(fp):
+
+def varint_decoder(fp: LZMAFile) -> Iterator[int]:
     s = 0
     v = 0
     while buf := fp.read(4096):
         for b in buf:
-            v |= ((b & ~128) << s)
+            v |= (b & ~128) << s
             if b >= 128:
                 s += 7
             else:
@@ -19,42 +25,58 @@ def varint_decoder(fp):
                 v = 0
 
 
-model, count, maxlen = argv[1:]
-count = int(count)
-maxlen = int(maxlen)
+class Model:
+    # All 3-letter combinations and their weights at word start
+    start: tuple[list[str], list[int]]
 
-with LZMAFile(model, "r") as fp:
-    enclen = fp.read(1)[0]
-    low = fp.read(enclen).decode()
-    ints = varint_decoder(fp)
-    start = {a + b + c: next(ints) for a in low for b in low for c in low}
-    cont = {}
-    for pre in (a + b + c for a in low for b in low for c in low):
-        cont[pre] = {c: next(ints) for c in low}
-        cont[pre][""] = next(ints)
+    # For each 3-letter combination (middle of word) the next chars and their weight.
+    cont: dict[str, list[int]]
 
-    with suppress(StopIteration):
-        next(ints)
-        raise Exception
+    # Chars and end marker
+    chars_end: str
 
-while count > 0:
-    word = choices(list(start), list(start.values()))[0]
-    while True:
-        pop = []
-        wgh = []
-        for k, v in cont[word[-3:]].items():
-            pop.append(k)
-            if not k:
-                v *= len(word) * 3
-            wgh.append(v)
+    def __init__(self, path: Path) -> None:
+        with LZMAFile(path, "r") as fp:
+            enclen = fp.read(1)[0]
+            chars = fp.read(enclen).decode()
+            self.chars_end = chars + chr(0)
+            ints = varint_decoder(fp)
+            self.start = [], []
+            for triple in (a + b + c for a in chars for b in chars for c in chars):
+                self.start[0].append(triple)
+                self.start[1].append(next(ints))
 
-        c = choices(pop, wgh)[0]
-        if not c:
-            if len(word) < 5:
-                continue
-            print(word)
-            count -= 1
-            break
-        word += c
-        if len(word) > maxlen:
-            break
+            self.cont = {}
+            for pre in (a + b + c for a in chars for b in chars for c in chars):
+                self.cont[pre] = [next(ints) for __ in self.chars_end]
+
+            # Ensure we're at EOF
+            with suppress(StopIteration):
+                next(ints)
+                raise Exception
+
+    def gen_word(self, minlen: int, maxlen: int) -> str:
+        while True:
+            word = choices(*self.start)[0]
+            while len(word) <= maxlen:
+                weights = self.cont[word[-3:]].copy()
+                # The longer the word the more likely make it end
+                weights[-1] *= len(word) * 3
+
+                c = choices(self.chars_end, weights)[0]
+                if c == chr(0):
+                    if len(word) >= minlen:
+                        return word
+                else:
+                    word += c
+
+
+if len(argv) != 5:
+    exit(f"Usage: {argv[0]} <model> <minlen> <maxlen> <count>")
+
+model = Model(Path(argv[1]))
+min_len = int(argv[2])
+max_len = int(argv[3])
+
+for __ in range(int(argv[4])):
+    print(model.gen_word(min_len, max_len))
